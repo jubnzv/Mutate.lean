@@ -64,9 +64,6 @@ partial def bodies (s : Syntax) : Array Syntax := Id.run do
   return acc
 def isSpec (c : Syntax) : Bool :=
   (c.find? (fun s => s.isOfKind ``Lean.Parser.Term.prop || (s.isIdent && s.getId == `Prop))).isSome
-def isThm (c : Syntax) : Bool :=
-  (c.find? (·.isOfKind ``Lean.Parser.Command.theorem)).isSome ||
-  (c.find? (·.isOfKind ``Lean.Parser.Command.example)).isSome
 def cName (c : Syntax) : String :=
   match c.find? (·.isOfKind ``Lean.Parser.Command.declId) with
   | some d => (d.getArg 0).getId.toString | none => "?"
@@ -76,26 +73,46 @@ partial def parseAll (ic : InputContext) (pm : ParserModuleContext)
   let (c, st', ms') := parseCommand ic pm st ms
   if c.isOfKind ``Lean.Parser.Command.eoi then acc else parseAll ic pm st' ms' (acc.push c)
 
-def whoKilled (cmds : Array Syntax) (fm : FileMap) (ml : MessageLog) : String := Id.run do
+def whoKilled (nm : String) (cmds : Array Syntax) (fm : FileMap) (ml : MessageLog) : String := Id.run do
   for m in ml.toList do
     if m.severity == .error then
       let ep := fm.ofPosition m.pos
       for c in cmds do
         if let (some a, some b) := (c.getPos?, c.getTailPos?) then
           if a ≤ ep && ep ≤ b then
-            let tag := if isThm c then "killed" else "stillborn"
+            let tag := if cName c == nm then "stillborn" else "killed"
             return tag ++ "  " ++ cName c
       return "killed  ?"
   return "killed  ?"
 
+def modOf (p : String) : String :=
+  ((p.replace "./" "").replace ".lean" "").replace "/" "."
+
+def importsOf (h : String) : List String :=
+  (h.splitOn "\n").filterMap fun l =>
+    if l.startsWith "import " then some (String.Pos.Raw.extract l ⟨7⟩ l.rawEndPos) else none
+
+-- args: target [killer...]; killers inlined after target, must import it directly
 unsafe def main (args : List String) : IO Unit := do
-  Lean.enableInitializersExecution  -- 4.28+: olean ext loading dies without this
-  let file := args.headD "DoubleUp.lean"
-  let src ← IO.FS.readFile file
-  let ic := Parser.mkInputContext src file
+  Lean.enableInitializersExecution
+  if args.isEmpty then throw <| IO.userError "usage: MutateRun.lean <target> [killer...]"
+  let mods := args.map modOf
+  let hbs ← args.mapM fun (f : String) => do
+    let s ← IO.FS.readFile f
+    let (hdr, _, _) ← Parser.parseHeader (Parser.mkInputContext s f)
+    let he := hdr.raw.getTailPos?.getD ⟨0⟩
+    pure (String.Pos.Raw.extract s ⟨0⟩ he, String.Pos.Raw.extract s he s.rawEndPos)
+  let imps := (hbs.foldl (fun a hb => a ++ importsOf hb.1) []).foldl
+    (fun a m => if a.contains m || mods.contains m then a else a ++ [m]) []
+  let header := String.join (imps.map fun m => s!"import {m}\n")
+  let fBody := hbs.head!.2
+  let src := header ++ fBody ++ String.join ((hbs.drop 1).map fun hb => "\n" ++ hb.2)
+  let fEnd := (header ++ fBody).rawEndPos
+  let name := args.head!
+  let ic := Parser.mkInputContext src name
   let (hdr, mpst, ms) ← Parser.parseHeader ic
   let (env, ms) ← processHeader hdr {} ms ic
-  if ms.hasErrors then  -- empty env = silent garbage downstream, die loud
+  if ms.hasErrors then
     for m in ms.toList do IO.eprintln (← m.toString)
     throw <| IO.userError "header import failed"
   let pm : ParserModuleContext := { env := env, options := {} }
@@ -103,17 +120,19 @@ unsafe def main (args : List String) : IO Unit := do
   let mut sites := #[]
   for c in cmds do
     if isDef c && !isSpec c then
-      for b in bodies c do for s in collect src b do sites := sites.push (cName c, s)
+      if let some cp := c.getPos? then
+        if cp ≤ fEnd then
+          for b in bodies c do for s in collect src b do sites := sites.push (cName c, s)
   IO.println s!"{sites.size} AST sites in def bodies\n"
   let mut k := 0; let mut sv := 0; let mut sb := 0
   for (nm, p, q, r) in sites do
     let msrc := String.Pos.Raw.extract src ⟨0⟩ p ++ r ++ String.Pos.Raw.extract src q src.rawEndPos
-    let ic2 := Parser.mkInputContext msrc file
+    let ic2 := Parser.mkInputContext msrc name
     let cs := Command.mkState env {} {}
     let fs ← IO.processCommands ic2 mpst cs
     let ml := fs.commandState.messages
     if ml.hasErrors then
-      let verdict := whoKilled (parseAll ic2 pm mpst {} #[]) ic2.fileMap ml
+      let verdict := whoKilled nm (parseAll ic2 pm mpst {} #[]) ic2.fileMap ml
       if verdict.startsWith "killed" then k := k+1 else sb := sb+1
       IO.println s!"  {nm}  {r}  {verdict}"
     else
