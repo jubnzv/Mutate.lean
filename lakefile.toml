@@ -1,0 +1,13 @@
+name = "Mutate"
+defaultTargets = ["Mutate", "MutateRun"]
+
+# Mutation-testing harness for Lean proofs (toolchain-agnostic; no deps beyond Lean core).
+# Mutate.lean   -- Op combinators + `#count` elaborator (inspect mutants of a term).
+# MutateRun.lean-- the runner (`def main`): mutates def bodies of a target file, re-elaborates each,
+#                  classifies killed/survived/stillborn. Invoked via `lake env lean --run` from the
+#                  TARGET model's lake project (so the model's imports resolve). See README.
+[[lean_lib]]
+name = "Mutate"
+
+[[lean_lib]]
+name = "MutateRun"

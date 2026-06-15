@@ -1,0 +1,7 @@
+/.lake/
+/build/
+*.olean
+*.ilean
+*.trace
+*.hash
+tags
