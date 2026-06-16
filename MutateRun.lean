@@ -88,26 +88,60 @@ def whoKilled (nm : String) (cmds : Array Syntax) (fm : FileMap) (ml : MessageLo
 def modOf (p : String) : String :=
   ((p.replace "./" "").replace ".lean" "").replace "/" "."
 
+def modPath (m : String) : String :=
+  m.replace "." "/" ++ ".lean"
+
 def importsOf (h : String) : List String :=
   (h.splitOn "\n").filterMap fun l =>
     if l.startsWith "import " then some (String.Pos.Raw.extract l ⟨7⟩ l.rawEndPos) else none
 
--- args: target [killer...]; killers inlined after target, must import it directly
+partial def gather (m : String)
+    (st : List String × List (String × String × List String)) :
+    IO (List String × List (String × String × List String)) := do
+  if st.1.contains m then return st
+  let path := modPath m
+  if !(← System.FilePath.pathExists path) then return (m :: st.1, st.2)
+  let s ← IO.FS.readFile path
+  let (hdr, _, _) ← Parser.parseHeader (Parser.mkInputContext s path)
+  let he := hdr.raw.getTailPos?.getD ⟨0⟩
+  let body := String.Pos.Raw.extract s he s.rawEndPos
+  let imps := importsOf (String.Pos.Raw.extract s ⟨0⟩ he)
+  let mut st := (m :: st.1, (m, body, imps) :: st.2)
+  for i in imps do st ← gather i st
+  return st
+
+def reachT (g : List (String × String × List String)) (t : String) : List String := Id.run do
+  let mut r := [t]
+  for _ in [0:g.length + 1] do
+    for e in g do
+      if !r.contains e.1 && e.2.2.any (fun i => r.contains i) then r := e.1 :: r
+  return r
+
+def topo (g : List (String × String × List String)) (ns : List String) : List String := Id.run do
+  let mut out : List String := []
+  for _ in [0:ns.length + 1] do
+    for e in g do
+      if ns.contains e.1 && !out.contains e.1 &&
+         (e.2.2.filter (fun i => ns.contains i)).all (fun i => out.contains i) then
+        out := out ++ [e.1]
+  return out
+
 unsafe def main (args : List String) : IO Unit := do
   Lean.enableInitializersExecution
   if args.isEmpty then throw <| IO.userError "usage: MutateRun.lean <target> [killer...]"
-  let mods := args.map modOf
-  let hbs ← args.mapM fun (f : String) => do
-    let s ← IO.FS.readFile f
-    let (hdr, _, _) ← Parser.parseHeader (Parser.mkInputContext s f)
-    let he := hdr.raw.getTailPos?.getD ⟨0⟩
-    pure (String.Pos.Raw.extract s ⟨0⟩ he, String.Pos.Raw.extract s he s.rawEndPos)
-  let imps := (hbs.foldl (fun a hb => a ++ importsOf hb.1) []).foldl
-    (fun a m => if a.contains m || mods.contains m then a else a ++ [m]) []
+  let seeds := args.map modOf
+  let t := seeds.head!
+  let (_, g) ← seeds.foldlM (fun st m => gather m st)
+    (([], []) : List String × List (String × String × List String))
+  let inSet := (reachT g t ++ seeds).foldl (fun a m => if a.contains m then a else a ++ [m]) []
+  let ord := t :: (topo g inSet).filter (· != t)
+  let bodyOf := fun m => ((g.find? (·.1 == m)).map (·.2.1)).getD ""
+  let imps := (g.foldl (fun a e => a ++ e.2.2) []).foldl
+    (fun a m => if a.contains m || inSet.contains m then a else a ++ [m]) []
   let header := String.join (imps.map fun m => s!"import {m}\n")
-  let fBody := hbs.head!.2
-  let src := header ++ fBody ++ String.join ((hbs.drop 1).map fun hb => "\n" ++ hb.2)
-  let fEnd := (header ++ fBody).rawEndPos
+  let tBody := bodyOf t
+  let src := header ++ tBody ++ String.join ((ord.drop 1).map fun m => "\n" ++ bodyOf m)
+  let fEnd := (header ++ tBody).rawEndPos
   let name := args.head!
   let ic := Parser.mkInputContext src name
   let (hdr, mpst, ms) ← Parser.parseHeader ic
