@@ -9,7 +9,7 @@ It is supposed to always support the latest version of Lean only, because intern
 Run it from the target project's `lake` dir:
 ```
 cd <your-lean-project>
-lake env lean --run /path/to/Mutate.lean/MutateRun.lean YourModel.lean
+lake env lean --run /path/to/Mutate.lean/Mutate.lean YourModel.lean
 ```
 
 Output: one line per mutant `  <def>  <op>  <verdict>  <killer-theorem>`, then a summary `killed=.. survived=.. stillborn=..`. A clean run is `survived=0` (modulo provably-equivalent noise).
