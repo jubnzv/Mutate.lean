@@ -1,7 +1,9 @@
 # Mutate.lean — mutation testing for Lean4 proofs
 Checks that your theorems actually constrain your `def`s. It mutates `def`/`instance`/`abbrev` bodies, re-elaborates each mutant in-process, and classifies via the compiler:
 
-This is a small library which depends on Lean >=4.28 only.
+This is a small tool which depends on Lean >=4.28 only.
+
+It is supposed to always support the latest version of Lean only, because internally it depends on the Lean compiler frontend.
 
 ## Usage
 Run it from the target project's `lake` dir:
@@ -24,4 +26,4 @@ This tool gives the model cheap, fast feedback, so the generated code is more co
 
 It works great with small isolated spec files describing math algorithms.
 
-For good-quality hand-written specs the tool generates mostly noise, while it is still capable of highlighting some specification gaps or finding dead code.
+For good-quality hand-written specs, the tool generates mostly noise, while it is still capable of highlighting some specification gaps or dead code; here is [an example finding](https://github.com/Verified-zkEVM/CompPoly/issues/248).
