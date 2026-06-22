@@ -1,13 +1,17 @@
 import Lean
 open Lean Elab Parser Command
 
-def swaps : List (Name × String) :=
-  [(`«term_-_»,"+"),(`«term_+_»,"-"),(`«term_*_»,"/"),(`«term_/_»,"*"),
-   (`«term_<_»,"≤"),(`«term_≤_»,"<"),(`«term_>_»,"≥"),(`«term_≥_»,">"),(`«term_==_»,"!="),
-   (`«term_=_»,"≠"),(`«term_≠_»,"="),
-   (`«term_∧_»,"∨"),
-   (`«term_&&&_»,"|||"),(`«term_|||_»,"&&&"),(`«term_^^^_»,"&&&"),
-   (`«term_<<<_»,">>>"),(`«term_>>>_»,"<<<")]
+def swaps : List (Name × List String) :=
+  [(`«term_+_»,["-","*"]),(`«term_-_»,["+","/"]),(`«term_*_»,["+","/"]),
+   (`«term_/_»,["%","*"]),(`«term_%_»,["/","+"]),
+   (`«term_<_»,["≤","=",">"]),(`«term_≤_»,["<",">"]),
+   (`«term_>_»,["≥","=","<"]),(`«term_≥_»,[">","<"]),
+   (`«term_==_»,["!="]),(`«term_!=_»,["=="]),
+   (`«term_=_»,["≠"]),(`«term_≠_»,["="]),
+   (`«term_∧_»,["∨"]),(`«term_∨_»,["∧"]),
+   (`«term_&&_»,["||"]),(`«term_||_»,["&&"]),
+   (`«term_&&&_»,["|||","^^^"]),(`«term_|||_»,["&&&","^^^"]),(`«term_^^^_»,["&&&","|||"]),
+   (`«term_<<<_»,[">>>"]),(`«term_>>>_»,["<<<"])]
 
 def identSwaps : List (Name × String) :=
   [(`min,"max"),(`max,"min"),(`Nat.min,"Nat.max"),(`Nat.max,"Nat.min"),
@@ -17,10 +21,10 @@ def identSwaps : List (Name × String) :=
 partial def collect (src : String) (s : Syntax) : Array (String.Pos.Raw × String.Pos.Raw × String) := Id.run do
   let mut acc := #[]
   for a in s.getArgs do acc := acc ++ collect src a
-  if let some (_, r) := swaps.find? (·.1 == s.getKind) then
+  if let some (_, rs) := swaps.find? (·.1 == s.getKind) then
     if s.getArgs.size > 1 then
       if let (some p, some q) := (s.getArgs[1]!.getPos?, s.getArgs[1]!.getTailPos?) then
-        acc := acc.push (p, q, r)
+        for r in rs do acc := acc.push (p, q, r)
   else if let some n := s.isNatLit? then
     if let (some p, some q) := (s.getPos?, s.getTailPos?) then
       acc := acc.push (p, q, toString (n + 1))
