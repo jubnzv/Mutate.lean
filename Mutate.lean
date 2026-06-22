@@ -66,6 +66,22 @@ partial def bodies (s : Syntax) : Array Syntax := Id.run do
   let mut acc := #[]
   for a in s.getArgs do acc := acc ++ bodies a
   return acc
+
+def vals : List String := ["default","0","1","true","false"]
+
+-- whole-body -> constant; ill-typed swaps become stillborn, never fatal
+def bodyVals (src : String) (b : Syntax) : Array (String.Pos.Raw × String.Pos.Raw × String) := Id.run do
+  let mut acc := #[]
+  if b.isOfKind ``Lean.Parser.Command.declValSimple then
+    let t := b.getArg 1
+    if let (some p, some q) := (t.getPos?, t.getTailPos?) then
+      let orig := String.Pos.Raw.extract src p q
+      for c in vals do if c != orig then acc := acc.push (p, q, c)
+  else if b.isOfKind ``Lean.Parser.Command.declValEqns then
+    if let (some p, some q) := (b.getPos?, b.getTailPos?) then
+      for c in vals do acc := acc.push (p, q, ":= " ++ c)
+  return acc
+
 def isSpec (c : Syntax) : Bool :=
   (c.find? (fun s => s.isOfKind ``Lean.Parser.Term.prop || (s.isIdent && s.getId == `Prop))).isSome
 def cName (c : Syntax) : String :=
@@ -160,7 +176,9 @@ unsafe def main (args : List String) : IO Unit := do
     if isDef c && !isSpec c then
       if let some cp := c.getPos? then
         if cp ≤ fEnd then
-          for b in bodies c do for s in collect src b do sites := sites.push (cName c, s)
+          for b in bodies c do
+            for s in collect src b do sites := sites.push (cName c, s)
+            for s in bodyVals src b do sites := sites.push (cName c, s)
   IO.println s!"{sites.size} AST sites in def bodies\n"
   let mut k := 0; let mut sv := 0; let mut sb := 0
   for (nm, p, q, r) in sites do
