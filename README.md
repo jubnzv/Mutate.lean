@@ -1,15 +1,13 @@
-# Mutate.lean — mutation testing for Lean4 proofs
-Checks that your theorems actually constrain your `def`s. It mutates `def`/`instance`/`abbrev` bodies, re-elaborates each mutant in-process, and classifies via the compiler:
+# Mutate.lean — mutation testing for Lean4
+Checks that your theorems constrain your `def`s. It mutates `def`/`instance`/`abbrev` bodies, re-elaborates each mutant in-process, and classifies via the compiler.
 
-This is a small tool which depends on Lean >=4.28 only.
-
-It is supposed to always support the latest version of Lean only, because internally it depends on the Lean compiler frontend.
+The tool depends on Lean >=4.28 only. It is supposed to always support the latest version of Lean, because internally it uses the Lean compiler frontend.
 
 ## Usage
 Run it from the target project's `lake` dir:
 ```
 cd <your-lean-project>
-lake env lean --run /path/to/Mutate.lean/Mutate.lean YourModel.lean
+lake env lean --run /path/to/Mutate.lean/Mutate.lean YourFile.lean
 ```
 
 Output: one line per mutant `  <def>  <op>  <verdict>  <killer-theorem>`, then a summary `killed=.. survived=.. stillborn=..`. A clean run is `survived=0` (modulo provably-equivalent noise).
