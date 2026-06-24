@@ -1,7 +1,7 @@
 # Mutate.lean — mutation testing for Lean4
 Checks that your theorems constrain your `def`s. It mutates `def`/`instance`/`abbrev` bodies, re-elaborates each mutant in-process, and classifies via the compiler.
 
-The tool depends on Lean >=4.28 only. It is supposed to always support the latest version of Lean, because internally it uses the Lean compiler frontend.
+The tool requires **Lean >=4.28**. It is supposed to always support the latest version of Lean, because internally it uses the Lean compiler frontend.
 
 ## Usage
 Run it from the target project's `lake` dir:
@@ -16,7 +16,7 @@ Output: one line per mutant `  <def>  <op>  <verdict>  <killer-theorem>`, then a
 - **survived** — everything still compiles with the mutated def => a coverage gap. Add an invariant.
 
 ## Use-cases
-The main purpose of the library is to **get extra feedback to LLMs writing specifications**.
+The main purpose of the tool is to **get extra feedback to LLMs writing specifications**.
 
 This tool gives the model cheap, fast feedback, so the generated code is more complete before manual review. Example — proving some Move smart-contract properties:
 
