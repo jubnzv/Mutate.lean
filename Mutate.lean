@@ -162,7 +162,15 @@ structure Opts where
   noOps : List String := []
   sample : Nat := 0
   seed : Nat := 0
+  shardI : Nat := 0
+  shardN : Nat := 0
   files : List String := []
+
+-- "I/N": shard I of N. 0/1 means "everything", i.e. the same as not sharding.
+def withShard (o : Opts) (spec : String) : Opts :=
+  match spec.splitOn "/" with
+  | [i, n] => { o with shardI := i.toNat!, shardN := n.toNat! }
+  | _ => o
 
 partial def parseArgs (as : List String) (o : Opts) : Opts :=
   match as with
@@ -198,6 +206,11 @@ partial def parseArgs (as : List String) (o : Opts) : Opts :=
     else if a == "--seed" then
       match t with
       | p :: t' => parseArgs t' { o with seed := p.toNat! }
+      | [] => o
+    else if a.startsWith "--shard=" then parseArgs t (withShard o (a.drop 8).toString)
+    else if a == "--shard" then
+      match t with
+      | p :: t' => parseArgs t' (withShard o p)
       | [] => o
     else parseArgs t { o with files := o.files ++ [a] }
 
@@ -241,8 +254,10 @@ unsafe def main (args : List String) : IO Unit := do
   let files := o.files
   if files.isEmpty then
     throw <| IO.userError
-      "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] [--sample N] [--seed S] <target> [killer...]"
+      "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] [--sample N] [--seed S] [--shard I/N] <target> [killer...]"
   -- Validate only the files named on the command line
+  if o.shardN > 0 && o.shardI >= o.shardN then
+    throw <| IO.userError s!"bad --shard {o.shardI}/{o.shardN}: shard index must be < shard count"
   for f in files do
     let fp := modPath (modOf f)
     if !(← System.FilePath.pathExists fp) then
@@ -284,10 +299,16 @@ unsafe def main (args : List String) : IO Unit := do
               if keepOp o s.1 then sites := sites.push (cName c, s)
   let total := sites.size
   sites := sampleSites o.sample o.seed sites
-  if verbose then
-    if sites.size != total then
-      IO.println s!"{sites.size} AST sites in def bodies (sample of {total}, seed {o.seed})\n"
-    else IO.println s!"{sites.size} AST sites in def bodies\n"
+  let sampled := sites.size
+  if o.shardN > 0 then
+    let mut sh := #[]
+    for i in [0:sites.size] do
+      if i % o.shardN == o.shardI then sh := sh.push sites[i]!
+    sites := sh
+  let tag :=
+    (if sampled != total then s!" (sample of {total}, seed {o.seed})" else "")
+    ++ (if o.shardN > 0 then s!" (shard {o.shardI}/{o.shardN} of {sampled})" else "")
+  if verbose then IO.println s!"{sites.size} AST sites in def bodies{tag}\n"
   if sites.isEmpty then
     throw <| IO.userError "no mutation sites -- did --include-def/--exclude-def/--ops/--no-ops filter everything out?"
   -- Baseline check: refuse to run when the unmutated source does not elaborate.
@@ -332,7 +353,5 @@ unsafe def main (args : List String) : IO Unit := do
       let eta := if i == 0 then 0 else (el / i) * (n - i)
       IO.println s!"  -- {i}/{n} ({(100*i)/n}%)  killed={k} survived={sv} stillborn={sb}  elapsed={el/60000}m  eta~{eta/60000}m"
       (← IO.getStdout).flush
-  if sites.size != total then
-    IO.println s!"\nkilled={k}  survived={sv}  stillborn={sb}  (sample of {total}, seed {o.seed})"
-  else IO.println s!"\nkilled={k}  survived={sv}  stillborn={sb}"
+  IO.println s!"\nkilled={k}  survived={sv}  stillborn={sb}{tag}"
   (← IO.getStdout).flush
