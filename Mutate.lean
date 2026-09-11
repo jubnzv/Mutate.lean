@@ -180,6 +180,18 @@ unsafe def main (args : List String) : IO Unit := do
             for s in collect src b do sites := sites.push (cName c, s)
             for s in bodyVals src b do sites := sites.push (cName c, s)
   IO.println s!"{sites.size} AST sites in def bodies\n"
+  -- Baseline check: refuse to run when the unmutated source does not elaborate.
+  (← IO.getStdout).flush
+  let t0 ← IO.monoMsNow
+  let baseFs ← IO.processCommands ic mpst (Command.mkState env {} {})
+  let baseMs := (← IO.monoMsNow) - t0
+  if baseFs.commandState.messages.hasErrors then
+    IO.eprintln "baseline does not elaborate -- every mutant would be reported `killed`:"
+    for m in baseFs.commandState.messages.toList do
+      if m.severity == .error then IO.eprintln (← m.toString)
+    throw <| IO.userError "refusing to run: fix the baseline first"
+  IO.println s!"baseline elaborates in {baseMs}ms ({sites.size} mutants ~ {(baseMs * sites.size) / 60000}min serial)\n"
+  (← IO.getStdout).flush
   let mut k := 0; let mut sv := 0; let mut sb := 0
   for (nm, p, q, r) in sites do
     let msrc := String.Pos.Raw.extract src ⟨0⟩ p ++ r ++ String.Pos.Raw.extract src q src.rawEndPos
