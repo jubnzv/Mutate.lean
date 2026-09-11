@@ -1,43 +1,47 @@
 import Lean
 open Lean Elab Parser Command
 
-def swaps : List (Name × List String) :=
-  [(`«term_+_»,["-","*"]),(`«term_-_»,["+","/"]),(`«term_*_»,["+","/"]),
-   (`«term_/_»,["%","*"]),(`«term_%_»,["/","+"]),
-   (`«term_<_»,["≤","=",">"]),(`«term_≤_»,["<",">"]),
-   (`«term_>_»,["≥","=","<"]),(`«term_≥_»,[">","<"]),
-   (`«term_==_»,["!="]),(`«term_!=_»,["=="]),
-   (`«term_=_»,["≠"]),(`«term_≠_»,["="]),
-   (`«term_∧_»,["∨"]),(`«term_∨_»,["∧"]),
-   (`«term_&&_»,["||"]),(`«term_||_»,["&&"]),
-   (`«term_&&&_»,["|||","^^^"]),(`«term_|||_»,["&&&","^^^"]),(`«term_^^^_»,["&&&","|||"]),
-   (`«term_<<<_»,[">>>"]),(`«term_>>>_»,["<<<"])]
+def swaps : List (Name × String × List String) :=
+  [(`«term_+_»,"+",["-","*"]),(`«term_-_»,"-",["+","/"]),(`«term_*_»,"*",["+","/"]),
+   (`«term_/_»,"/",["%","*"]),(`«term_%_»,"%",["/","+"]),
+   (`«term_<_»,"<",["≤","=",">"]),(`«term_≤_»,"≤",["<",">"]),
+   (`«term_>_»,">",["≥","=","<"]),(`«term_≥_»,"≥",[">","<"]),
+   (`«term_==_»,"==",["!="]),(`«term_!=_»,"!=",["=="]),
+   (`«term_=_»,"=",["≠"]),(`«term_≠_»,"≠",["="]),
+   (`«term_∧_»,"∧",["∨"]),(`«term_∨_»,"∨",["∧"]),
+   (`«term_&&_»,"&&",["||"]),(`«term_||_»,"||",["&&"]),
+   (`«term_&&&_»,"&&&",["|||","^^^"]),(`«term_|||_»,"|||",["&&&","^^^"]),(`«term_^^^_»,"^^^",["&&&","|||"]),
+   (`«term_<<<_»,"<<<",[">>>"]),(`«term_>>>_»,">>>",["<<<"])]
+
+-- every mutation site carries an op tag so `--ops`/`--no-ops` can select classes
+def opTags : List String :=
+  (swaps.map (·.2.1)) ++ ["lit","ident","flip","args","body"]
 
 def identSwaps : List (Name × String) :=
   [(`min,"max"),(`max,"min"),(`Nat.min,"Nat.max"),(`Nat.max,"Nat.min"),
    (`true,"false"),(`false,"true"),
    (`sub?,"add?"),(`mod?,"div?")]
 
-partial def collect (src : String) (s : Syntax) : Array (String.Pos.Raw × String.Pos.Raw × String) := Id.run do
+partial def collect (src : String) (s : Syntax) : Array (String × String.Pos.Raw × String.Pos.Raw × String) := Id.run do
   let mut acc := #[]
   for a in s.getArgs do acc := acc ++ collect src a
-  if let some (_, rs) := swaps.find? (·.1 == s.getKind) then
+  if let some (_, tag, rs) := swaps.find? (·.1 == s.getKind) then
     if s.getArgs.size > 1 then
       if let (some p, some q) := (s.getArgs[1]!.getPos?, s.getArgs[1]!.getTailPos?) then
-        for r in rs do acc := acc.push (p, q, r)
+        for r in rs do acc := acc.push (tag, p, q, r)
   else if let some n := s.isNatLit? then
     if let (some p, some q) := (s.getPos?, s.getTailPos?) then
-      acc := acc.push (p, q, toString (n + 1))
+      acc := acc.push ("lit", p, q, toString (n + 1))
   else if s.isIdent then
     if let some (_, r) := identSwaps.find? (·.1 == s.getId) then
       if let (some p, some q) := (s.getPos?, s.getTailPos?) then
-        acc := acc.push (p, q, r)
+        acc := acc.push ("ident", p, q, r)
   else if s.isOfKind ``Lean.Parser.Term.app then
     let fn := s.getArg 0
     let args := (s.getArg 1).getArgs
     if fn.isIdent && fn.getId == `flip && args.size ≥ 1 then
       if let (some p, some pa, some qa) := (fn.getPos?, args[0]!.getPos?, args[0]!.getTailPos?) then
-        acc := acc.push (p, qa, String.Pos.Raw.extract src pa qa)
+        acc := acc.push ("flip", p, qa, String.Pos.Raw.extract src pa qa)
     if h : args.size ≥ 2 then
       let a := args[args.size - 2]; let b := args[args.size - 1]
       -- named args are position-independent -> swap is a no-op, fakes a survived
@@ -48,7 +52,7 @@ partial def collect (src : String) (s : Syntax) : Array (String.Pos.Raw × Strin
           let ta := String.Pos.Raw.extract src pa qa
           let tb := String.Pos.Raw.extract src pb qb
           if ta != tb then  -- f x x, same reason
-            acc := acc.push (pa, qb, tb ++ " " ++ ta)
+            acc := acc.push ("args", pa, qb, tb ++ " " ++ ta)
   return acc
 
 def isDef (c : Syntax) : Bool :=
@@ -70,16 +74,16 @@ partial def bodies (s : Syntax) : Array Syntax := Id.run do
 def vals : List String := ["default","0","1","true","false"]
 
 -- whole-body -> constant; ill-typed swaps become stillborn, never fatal
-def bodyVals (src : String) (b : Syntax) : Array (String.Pos.Raw × String.Pos.Raw × String) := Id.run do
+def bodyVals (src : String) (b : Syntax) : Array (String × String.Pos.Raw × String.Pos.Raw × String) := Id.run do
   let mut acc := #[]
   if b.isOfKind ``Lean.Parser.Command.declValSimple then
     let t := b.getArg 1
     if let (some p, some q) := (t.getPos?, t.getTailPos?) then
       let orig := String.Pos.Raw.extract src p q
-      for c in vals do if c != orig then acc := acc.push (p, q, c)
+      for c in vals do if c != orig then acc := acc.push ("body", p, q, c)
   else if b.isOfKind ``Lean.Parser.Command.declValEqns then
     if let (some p, some q) := (b.getPos?, b.getTailPos?) then
-      for c in vals do acc := acc.push (p, q, ":= " ++ c)
+      for c in vals do acc := acc.push ("body", p, q, ":= " ++ c)
   return acc
 
 def isSpec (c : Syntax) : Bool :=
@@ -154,6 +158,8 @@ structure Opts where
   verbose : Bool := false
   incl : List String := []
   excl : List String := []
+  ops : List String := []
+  noOps : List String := []
   files : List String := []
 
 partial def parseArgs (as : List String) (o : Opts) : Opts :=
@@ -171,11 +177,25 @@ partial def parseArgs (as : List String) (o : Opts) : Opts :=
       match t with
       | p :: t' => parseArgs t' { o with excl := o.excl ++ splitPats p }
       | [] => o
+    else if a.startsWith "--ops=" then parseArgs t { o with ops := o.ops ++ splitPats (a.drop 6).toString }
+    else if a.startsWith "--no-ops=" then parseArgs t { o with noOps := o.noOps ++ splitPats (a.drop 9).toString }
+    else if a == "--ops" then
+      match t with
+      | p :: t' => parseArgs t' { o with ops := o.ops ++ splitPats p }
+      | [] => o
+    else if a == "--no-ops" then
+      match t with
+      | p :: t' => parseArgs t' { o with noOps := o.noOps ++ splitPats p }
+      | [] => o
     else parseArgs t { o with files := o.files ++ [a] }
 
 -- substring match on the declaration name; include (if any) must match, exclude wins
 def keepDef (o : Opts) (nm : String) : Bool :=
   (o.incl.isEmpty || o.incl.any (hasSub · nm)) && !o.excl.any (hasSub · nm)
+
+-- exact match on the op tag; `--ops` (if any) must match, `--no-ops` wins
+def keepOp (o : Opts) (tag : String) : Bool :=
+  (o.ops.isEmpty || o.ops.contains tag) && !o.noOps.contains tag
 
 unsafe def main (args : List String) : IO Unit := do
   Lean.enableInitializersExecution
@@ -184,7 +204,10 @@ unsafe def main (args : List String) : IO Unit := do
   let files := o.files
   if files.isEmpty then
     throw <| IO.userError
-      "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] <target> [killer...]"
+      "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] <target> [killer...]"
+  for t in o.ops ++ o.noOps do
+    if !opTags.contains t then
+      throw <| IO.userError s!"unknown op {t}; known: {String.intercalate "," opTags}"
   let seeds := files.map modOf
   let t := seeds.head!
   let (_, g) ← seeds.foldlM (fun st m => gather m st)
@@ -213,11 +236,13 @@ unsafe def main (args : List String) : IO Unit := do
       if let some cp := c.getPos? then
         if cp ≤ fEnd then
           for b in bodies c do
-            for s in collect src b do sites := sites.push (cName c, s)
-            for s in bodyVals src b do sites := sites.push (cName c, s)
+            for s in collect src b do
+              if keepOp o s.1 then sites := sites.push (cName c, s)
+            for s in bodyVals src b do
+              if keepOp o s.1 then sites := sites.push (cName c, s)
   if verbose then IO.println s!"{sites.size} AST sites in def bodies\n"
   if sites.isEmpty then
-    throw <| IO.userError "no mutation sites -- did --include-def/--exclude-def filter everything out?"
+    throw <| IO.userError "no mutation sites -- did --include-def/--exclude-def/--ops/--no-ops filter everything out?"
   -- Baseline check: refuse to run when the unmutated source does not elaborate.
   (← IO.getStdout).flush
   let t0 ← IO.monoMsNow
@@ -235,7 +260,7 @@ unsafe def main (args : List String) : IO Unit := do
   let mut i := 0
   let tStart ← IO.monoMsNow
   let n := sites.size
-  for (nm, p, q, r) in sites do
+  for (nm, _op, p, q, r) in sites do
     i := i + 1
     let msrc := String.Pos.Raw.extract src ⟨0⟩ p ++ r ++ String.Pos.Raw.extract src q src.rawEndPos
     let ic2 := Parser.mkInputContext msrc name
