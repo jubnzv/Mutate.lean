@@ -148,8 +148,11 @@ def topo (g : List (String × String × List String)) (ns : List String) : List 
 
 unsafe def main (args : List String) : IO Unit := do
   Lean.enableInitializersExecution
-  if args.isEmpty then throw <| IO.userError "usage: Mutate.lean <target> [killer...]"
-  let seeds := args.map modOf
+  let verbose := args.any (fun a => a == "-v" || a == "--verbose")
+  let files := args.filter (fun a => a != "-v" && a != "--verbose")
+  if files.isEmpty then
+    throw <| IO.userError "usage: Mutate.lean [-v|--verbose] <target> [killer...]"
+  let seeds := files.map modOf
   let t := seeds.head!
   let (_, g) ← seeds.foldlM (fun st m => gather m st)
     (([], []) : List String × List (String × String × List String))
@@ -162,7 +165,7 @@ unsafe def main (args : List String) : IO Unit := do
   let tBody := bodyOf t
   let src := header ++ tBody ++ String.join ((ord.drop 1).map fun m => "\n" ++ bodyOf m)
   let fEnd := (header ++ tBody).rawEndPos
-  let name := args.head!
+  let name := files.head!
   let ic := Parser.mkInputContext src name
   let (hdr, mpst, ms) ← Parser.parseHeader ic
   let (env, ms) ← processHeader hdr {} ms ic
@@ -179,7 +182,7 @@ unsafe def main (args : List String) : IO Unit := do
           for b in bodies c do
             for s in collect src b do sites := sites.push (cName c, s)
             for s in bodyVals src b do sites := sites.push (cName c, s)
-  IO.println s!"{sites.size} AST sites in def bodies\n"
+  if verbose then IO.println s!"{sites.size} AST sites in def bodies\n"
   -- Baseline check: refuse to run when the unmutated source does not elaborate.
   (← IO.getStdout).flush
   let t0 ← IO.monoMsNow
@@ -190,10 +193,15 @@ unsafe def main (args : List String) : IO Unit := do
     for m in baseFs.commandState.messages.toList do
       if m.severity == .error then IO.eprintln (← m.toString)
     throw <| IO.userError "refusing to run: fix the baseline first"
-  IO.println s!"baseline elaborates in {baseMs}ms ({sites.size} mutants ~ {(baseMs * sites.size) / 60000}min serial)\n"
-  (← IO.getStdout).flush
+  if verbose then
+    IO.println s!"baseline elaborates in {baseMs}ms ({sites.size} mutants ~ {(baseMs * sites.size) / 60000}min serial)\n"
+    (← IO.getStdout).flush
   let mut k := 0; let mut sv := 0; let mut sb := 0
+  let mut i := 0
+  let tStart ← IO.monoMsNow
+  let n := sites.size
   for (nm, p, q, r) in sites do
+    i := i + 1
     let msrc := String.Pos.Raw.extract src ⟨0⟩ p ++ r ++ String.Pos.Raw.extract src q src.rawEndPos
     let ic2 := Parser.mkInputContext msrc name
     let cs := Command.mkState env {} {}
@@ -202,8 +210,20 @@ unsafe def main (args : List String) : IO Unit := do
     if ml.hasErrors then
       let verdict := whoKilled nm (parseAll ic2 pm mpst {} #[]) ic2.fileMap ml
       if verdict.startsWith "killed" then k := k+1 else sb := sb+1
-      IO.println s!"  {nm}  {r}  {verdict}"
+      if verbose then IO.println s!"[{i}/{n}] {nm}  {r}  {verdict}"
+      else IO.println s!"  {nm}  {r}  {verdict}"
     else
       sv := sv+1
-      IO.println s!"  {nm}  -> {r}  survived"
+      if verbose then IO.println s!"[{i}/{n}] {nm}  -> {r}  survived"
+      else IO.println s!"  {nm}  -> {r}  survived"
+    -- U1: flush every line so redirected output is live, and report progress
+    -- periodically with a measured ETA. A long run is otherwise indistinguishable
+    -- from a hung one -- the only way to tell used to be `ps` on the CPU time.
+    (← IO.getStdout).flush
+    if verbose && (i % 25 == 0 || i == n) then
+      let el := (← IO.monoMsNow) - tStart
+      let eta := if i == 0 then 0 else (el / i) * (n - i)
+      IO.println s!"  -- {i}/{n} ({(100*i)/n}%)  killed={k} survived={sv} stillborn={sb}  elapsed={el/60000}m  eta~{eta/60000}m"
+      (← IO.getStdout).flush
   IO.println s!"\nkilled={k}  survived={sv}  stillborn={sb}"
+  (← IO.getStdout).flush

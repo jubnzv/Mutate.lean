@@ -7,13 +7,16 @@ The tool requires **Lean >=4.28**. It is supposed to always support the latest v
 Run it from the target project's `lake` dir:
 ```
 cd <your-lean-project>
-lake env lean --run /path/to/Mutate.lean/Mutate.lean YourFile.lean
+lake env lean --run /path/to/Mutate.lean/Mutate.lean [-v] YourFile.lean
 ```
 
 Output: one line per mutant `  <def>  <op>  <verdict>  <killer-theorem>`, then a summary `killed=.. survived=.. stillborn=..`. A clean run is `survived=0` (modulo provably-equivalent noise).
 - **killed** — some theorem/`example` now fails to elaborate => that operator is constrained. Good.
 - **stillborn** — the mutant is ill-typed. Skip.
 - **survived** — everything still compiles with the mutated def => a coverage gap. Add an invariant.
+
+### Options
+`-v`/`--verbose` shows progress: site count, baseline time + ETA, `[i/N]`, running tally. Off by default.
 
 ## Use-cases
 The main purpose of the tool is to **get extra feedback to LLMs writing specifications**.
