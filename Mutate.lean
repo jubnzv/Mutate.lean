@@ -221,6 +221,19 @@ def sampleSites {α : Type} (n seed : Nat) (a : Array α) : Array α := Id.run d
 def keepOp (o : Opts) (tag : String) : Bool :=
   (o.ops.isEmpty || o.ops.contains tag) && !o.noOps.contains tag
 
+-- elaborate only until the first error
+partial def processUntilError : Frontend.FrontendM Unit := do
+  let done ← Frontend.processCommand
+  if done then return
+  if (← get).commandState.messages.hasErrors then return
+  processUntilError
+
+def processEarly (ic : Parser.InputContext) (ps : Parser.ModuleParserState)
+    (cs : Command.State) : IO Frontend.State := do
+  let (_, st) ← (processUntilError.run { inputCtx := ic }).run
+    { commandState := cs, parserState := ps, cmdPos := ps.pos }
+  return st
+
 unsafe def main (args : List String) : IO Unit := do
   Lean.enableInitializersExecution
   let o := parseArgs args {}
@@ -294,7 +307,7 @@ unsafe def main (args : List String) : IO Unit := do
     let msrc := String.Pos.Raw.extract src ⟨0⟩ p ++ r ++ String.Pos.Raw.extract src q src.rawEndPos
     let ic2 := Parser.mkInputContext msrc name
     let cs := Command.mkState env {} {}
-    let fs ← IO.processCommands ic2 mpst cs
+    let fs ← processEarly ic2 mpst cs
     let ml := fs.commandState.messages
     if ml.hasErrors then
       let verdict := whoKilled nm (parseAll ic2 pm mpst {} #[]) ic2.fileMap ml
