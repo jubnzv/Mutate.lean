@@ -160,6 +160,8 @@ structure Opts where
   excl : List String := []
   ops : List String := []
   noOps : List String := []
+  sample : Nat := 0
+  seed : Nat := 0
   files : List String := []
 
 partial def parseArgs (as : List String) (o : Opts) : Opts :=
@@ -187,11 +189,33 @@ partial def parseArgs (as : List String) (o : Opts) : Opts :=
       match t with
       | p :: t' => parseArgs t' { o with noOps := o.noOps ++ splitPats p }
       | [] => o
+    else if a.startsWith "--sample=" then parseArgs t { o with sample := (a.drop 9).toString.toNat! }
+    else if a.startsWith "--seed=" then parseArgs t { o with seed := (a.drop 7).toString.toNat! }
+    else if a == "--sample" then
+      match t with
+      | p :: t' => parseArgs t' { o with sample := p.toNat! }
+      | [] => o
+    else if a == "--seed" then
+      match t with
+      | p :: t' => parseArgs t' { o with seed := p.toNat! }
+      | [] => o
     else parseArgs t { o with files := o.files ++ [a] }
 
 -- substring match on the declaration name; include (if any) must match, exclude wins
 def keepDef (o : Opts) (nm : String) : Bool :=
   (o.incl.isEmpty || o.incl.any (hasSub · nm)) && !o.excl.any (hasSub · nm)
+
+-- deterministic subset: partial Fisher-Yates driven by an LCG. Same --sample/--seed
+-- always selects the same sites, so a sampled run is reproducible.
+def sampleSites {α : Type} (n seed : Nat) (a : Array α) : Array α := Id.run do
+  if n == 0 || n >= a.size then return a
+  let mut arr := a
+  let mut st := seed * 2654435761 + 12345
+  for i in [0:n] do
+    st := (st * 1103515245 + 12345) % 2147483648
+    let j := i + st % (arr.size - i)
+    arr := arr.swapIfInBounds i j
+  return arr.take n
 
 -- exact match on the op tag; `--ops` (if any) must match, `--no-ops` wins
 def keepOp (o : Opts) (tag : String) : Bool :=
@@ -204,7 +228,7 @@ unsafe def main (args : List String) : IO Unit := do
   let files := o.files
   if files.isEmpty then
     throw <| IO.userError
-      "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] <target> [killer...]"
+      "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] [--sample N] [--seed S] <target> [killer...]"
   for t in o.ops ++ o.noOps do
     if !opTags.contains t then
       throw <| IO.userError s!"unknown op {t}; known: {String.intercalate "," opTags}"
@@ -240,7 +264,12 @@ unsafe def main (args : List String) : IO Unit := do
               if keepOp o s.1 then sites := sites.push (cName c, s)
             for s in bodyVals src b do
               if keepOp o s.1 then sites := sites.push (cName c, s)
-  if verbose then IO.println s!"{sites.size} AST sites in def bodies\n"
+  let total := sites.size
+  sites := sampleSites o.sample o.seed sites
+  if verbose then
+    if sites.size != total then
+      IO.println s!"{sites.size} AST sites in def bodies (sample of {total}, seed {o.seed})\n"
+    else IO.println s!"{sites.size} AST sites in def bodies\n"
   if sites.isEmpty then
     throw <| IO.userError "no mutation sites -- did --include-def/--exclude-def/--ops/--no-ops filter everything out?"
   -- Baseline check: refuse to run when the unmutated source does not elaborate.
@@ -285,5 +314,7 @@ unsafe def main (args : List String) : IO Unit := do
       let eta := if i == 0 then 0 else (el / i) * (n - i)
       IO.println s!"  -- {i}/{n} ({(100*i)/n}%)  killed={k} survived={sv} stillborn={sb}  elapsed={el/60000}m  eta~{eta/60000}m"
       (← IO.getStdout).flush
-  IO.println s!"\nkilled={k}  survived={sv}  stillborn={sb}"
+  if sites.size != total then
+    IO.println s!"\nkilled={k}  survived={sv}  stillborn={sb}  (sample of {total}, seed {o.seed})"
+  else IO.println s!"\nkilled={k}  survived={sv}  stillborn={sb}"
   (← IO.getStdout).flush

@@ -7,7 +7,7 @@ The tool requires **Lean >=4.28**. It is supposed to always support the latest v
 Run it from the target project's `lake` dir:
 ```
 cd <your-lean-project>
-lake env lean --run /path/to/Mutate.lean/Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] YourFile.lean
+lake env lean --run /path/to/Mutate.lean/Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] [--sample N] [--seed S] YourFile.lean
 ```
 
 Output: one line per mutant `  <def>  <op>  <verdict>  <killer-theorem>`, then a summary `killed=.. survived=.. stillborn=..`. A clean run is `survived=0` (modulo provably-equivalent noise).
@@ -21,6 +21,8 @@ Output: one line per mutant `  <def>  <op>  <verdict>  <killer-theorem>`, then a
 `--include-def P,..` / `--exclude-def P,..` mutate only defs whose name contains one of the substrings / skip those that do. Unset by default.
 
 `--ops O,..` / `--no-ops O,..` mutate only these operator classes / skip them. Names: the operators from the swap table plus `lit`, `ident`, `flip`, `args`, `body`. Unset by default.
+
+`--sample N` `--seed S` mutate a deterministic random subset of N sites; the summary then says which sample it was. Off by default.
 
 ## Use-cases
 The main purpose of the tool is to **get extra feedback to LLMs writing specifications**.
