@@ -242,6 +242,11 @@ unsafe def main (args : List String) : IO Unit := do
   if files.isEmpty then
     throw <| IO.userError
       "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] [--ops O,..] [--no-ops O,..] [--sample N] [--seed S] <target> [killer...]"
+  -- Validate only the files named on the command line
+  for f in files do
+    let fp := modPath (modOf f)
+    if !(← System.FilePath.pathExists fp) then
+      throw <| IO.userError s!"no such file: {fp}"
   for t in o.ops ++ o.noOps do
     if !opTags.contains t then
       throw <| IO.userError s!"unknown op {t}; known: {String.intercalate "," opTags}"
