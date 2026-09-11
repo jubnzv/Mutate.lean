@@ -146,12 +146,45 @@ def topo (g : List (String × String × List String)) (ns : List String) : List 
         out := out ++ [e.1]
   return out
 
+def splitPats (s : String) : List String := (s.splitOn ",").filter (· != "")
+
+def hasSub (pat nm : String) : Bool := pat != "" && (nm.splitOn pat).length > 1
+
+structure Opts where
+  verbose : Bool := false
+  incl : List String := []
+  excl : List String := []
+  files : List String := []
+
+partial def parseArgs (as : List String) (o : Opts) : Opts :=
+  match as with
+  | [] => o
+  | a :: t =>
+    if a == "-v" || a == "--verbose" then parseArgs t { o with verbose := true }
+    else if a.startsWith "--include-def=" then parseArgs t { o with incl := o.incl ++ splitPats (a.drop 14).toString }
+    else if a.startsWith "--exclude-def=" then parseArgs t { o with excl := o.excl ++ splitPats (a.drop 14).toString }
+    else if a == "--include-def" then
+      match t with
+      | p :: t' => parseArgs t' { o with incl := o.incl ++ splitPats p }
+      | [] => o
+    else if a == "--exclude-def" then
+      match t with
+      | p :: t' => parseArgs t' { o with excl := o.excl ++ splitPats p }
+      | [] => o
+    else parseArgs t { o with files := o.files ++ [a] }
+
+-- substring match on the declaration name; include (if any) must match, exclude wins
+def keepDef (o : Opts) (nm : String) : Bool :=
+  (o.incl.isEmpty || o.incl.any (hasSub · nm)) && !o.excl.any (hasSub · nm)
+
 unsafe def main (args : List String) : IO Unit := do
   Lean.enableInitializersExecution
-  let verbose := args.any (fun a => a == "-v" || a == "--verbose")
-  let files := args.filter (fun a => a != "-v" && a != "--verbose")
+  let o := parseArgs args {}
+  let verbose := o.verbose
+  let files := o.files
   if files.isEmpty then
-    throw <| IO.userError "usage: Mutate.lean [-v|--verbose] <target> [killer...]"
+    throw <| IO.userError
+      "usage: Mutate.lean [-v] [--include-def P,..] [--exclude-def P,..] <target> [killer...]"
   let seeds := files.map modOf
   let t := seeds.head!
   let (_, g) ← seeds.foldlM (fun st m => gather m st)
@@ -176,13 +209,15 @@ unsafe def main (args : List String) : IO Unit := do
   let cmds := parseAll ic pm mpst ms #[]
   let mut sites := #[]
   for c in cmds do
-    if isDef c && !isSpec c then
+    if isDef c && !isSpec c && keepDef o (cName c) then
       if let some cp := c.getPos? then
         if cp ≤ fEnd then
           for b in bodies c do
             for s in collect src b do sites := sites.push (cName c, s)
             for s in bodyVals src b do sites := sites.push (cName c, s)
   if verbose then IO.println s!"{sites.size} AST sites in def bodies\n"
+  if sites.isEmpty then
+    throw <| IO.userError "no mutation sites -- did --include-def/--exclude-def filter everything out?"
   -- Baseline check: refuse to run when the unmutated source does not elaborate.
   (← IO.getStdout).flush
   let t0 ← IO.monoMsNow
